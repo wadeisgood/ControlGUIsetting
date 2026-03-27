@@ -216,7 +216,80 @@ openclaw browser --browser-profile openclaw start
 openclaw browser --browser-profile openclaw status
 ```
 
+## Cleaning unused OpenClaw sub sections / historical session entries
+
+Use this workflow when the OpenClaw UI still shows many old sub sections, branches, or historical session entries that are no longer useful.
+
+### What usually causes the clutter
+
+The UI can retain entries from session history even after the underlying runtime work is already dead. Common sources:
+
+- old `~/.openclaw/agents/main/sessions/*.jsonl`
+- stale entries in `~/.openclaw/agents/main/sessions/sessions.json`
+- old tmux / ClawTeam runtime remnants (separate from UI history)
+- `.reset.*` snapshot files that may still exist on disk
+
+### Safe cleanup workflow
+
+1. Identify the **current active session** and keep it.
+2. List historical session files by recent modification time.
+3. Back up old session files before deleting anything.
+4. Remove old `.jsonl` session files except the current one.
+5. Shrink `sessions.json` so only the current session entry remains.
+6. Re-check the UI.
+7. Only if needed, clean `.reset.*` leftovers separately.
+
+### Example inventory command
+
+```bash
+python3 - <<'PY'
+import os, time
+base=os.path.expanduser('~/.openclaw/agents/main/sessions')
+current='CURRENT-SESSION-ID-HERE'
+files=[]
+for name in os.listdir(base):
+    if name.endswith('.jsonl'):
+        path=os.path.join(base,name)
+        st=os.stat(path)
+        files.append((st.st_mtime,name,st.st_size))
+files.sort(reverse=True)
+for mtime,name,size in files:
+    sid=name[:-6]
+    mark='KEEP-CURRENT' if sid==current else 'CANDIDATE'
+    print(f'{mark}\t{time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(mtime))}\t{size}\t{name}')
+PY
+```
+
+### Example cleanup command
+
+Run only after confirming the current session id:
+
+```bash
+set -e
+BASE="$HOME/.openclaw/agents/main/sessions"
+BACKUP="/tmp/openclaw-session-backup-$(date +%F)"
+CURRENT="CURRENT-SESSION-ID-HERE.jsonl"
+mkdir -p "$BACKUP"
+cd "$BASE"
+for f in *.jsonl; do
+  if [ "$f" != "$CURRENT" ]; then
+    cp -a "$f" "$BACKUP/"
+    rm -f "$f"
+  fi
+done
+```
+
+Then trim `sessions.json` to the active entry only.
+
+### Important cautions
+
+- Never delete the current live session file.
+- Back up before deletion.
+- Do not assume tmux cleanup alone will remove UI history.
+- Treat `.reset.*` files separately; they are not the same as active session files.
+
 ## Reference files
 
 - For a copy-paste troubleshooting flow, read `references/linux-gui-browser-repair.md`.
 - For symptom-to-cause mapping, read `references/error-signatures.md`.
+- For cleaning unused UI sub sections / session history, read `references/session-cleanup.md`.

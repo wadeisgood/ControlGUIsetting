@@ -59,6 +59,7 @@ The repository title uses the requested presentation name:
 - `skills/control-gui-setting/SKILL.md`
 - `skills/control-gui-setting/references/linux-gui-browser-repair.md`
 - `skills/control-gui-setting/references/error-signatures.md`
+- `skills/control-gui-setting/references/session-cleanup.md`
 
 ## Packaged skill
 
