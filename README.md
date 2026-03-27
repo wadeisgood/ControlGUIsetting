@@ -33,6 +33,8 @@ The skill guides an agent through:
 5. Importing `DISPLAY`, `WAYLAND_DISPLAY`, `XDG_SESSION_TYPE`, `XDG_RUNTIME_DIR`, and `DBUS_SESSION_BUS_ADDRESS` into `systemd --user`
 6. Restarting the OpenClaw gateway
 7. Validating that the managed browser launches successfully
+8. Distinguishing **browser launch success** from **browser tool exposure in the current chat session**
+9. Using `openclaw browser ... open <url>` as a practical fallback when the host browser works but the live agent session still lacks the `browser` tool
 
 ## Intended environment
 

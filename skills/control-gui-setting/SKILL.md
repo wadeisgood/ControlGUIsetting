@@ -151,12 +151,58 @@ At that point, the managed browser is ready and the machine-side setup is fixed.
 - you understand that existing-session attach is more fragile
 - the user is present to approve attach prompts if needed
 
+## Browser tool access vs browser launch
+
+Do not confuse these two problems:
+
+1. **Machine/browser launch problem**
+   - `openclaw browser --browser-profile openclaw start` fails
+   - fix desktop environment propagation, browser startup, and CDP reachability
+
+2. **Agent tool exposure problem**
+   - CLI browser works, but the current chat session still cannot call the `browser` tool
+   - fix tool policy / agent routing / channel runtime exposure
+
+If CLI works but the session still says it lacks `browser` tool access, treat that as a **tool exposure problem**, not a browser installation problem.
+
+### Diagnose tool exposure problems
+
+Check config first:
+
+```bash
+sed -n '1,260p' ~/.openclaw/openclaw.json
+```
+
+Look for:
+
+- global `tools.profile`
+- any `tools.allow` / `tools.deny`
+- per-agent `agents.list[].tools`
+- channel/group overrides that may deny `browser`
+- sandbox browser restrictions such as `allowHostControl`
+
+Important interpretation:
+
+- If global config does **not** deny `browser`, but the current session still cannot use it, the limitation may come from the channel/session runtime that exposed tools to this conversation.
+- In that case, fixing `openclaw browser` on the host will let CLI/browser automation work, but may **not** automatically grant the live chat session the `browser` tool.
+
+### Minimal machine-side fallback
+
+Even when the current session lacks `browser` tool access, you can still open pages on the host with CLI:
+
+```bash
+openclaw browser --browser-profile openclaw open https://chatgpt.com
+```
+
+This is useful as an operational fallback while separately debugging why the session tool list does not include `browser`.
+
 ## Common mistakes
 
 - Reinstalling Chrome before checking `systemctl --user show-environment`
 - Assuming `Missing X server or $DISPLAY` means the whole machine has no desktop
 - Trying to fix `user` attach first when the managed `openclaw` browser is still broken
 - Restarting the gateway remotely and being surprised when the current control session drops
+- Assuming a successful CLI browser launch automatically means the current chat session has the `browser` tool
 
 ## Minimal repair recipe
 
