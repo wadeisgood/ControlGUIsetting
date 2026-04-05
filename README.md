@@ -25,8 +25,17 @@
 - `opencli chatgpt-web open` ✅
 - `opencli chatgpt-web new` ✅
 - `opencli chatgpt-web debug` ✅
+- `opencli chatgpt-web scan-dom` ✅
+- `opencli chatgpt-web scan-conversation` ✅
 - `opencli chatgpt-web ask "..."` ✅
-- `opencli chatgpt-web read` ⚠️（仍待補強）
+- `opencli chatgpt-web read` ✅（已可重用 active ChatGPT tab 讀取最新回覆）
+
+目前建議流程：
+
+1. `status`
+2. `new`
+3. `ask`
+4. `read`
 
 專案內已包含：
 
@@ -132,8 +141,17 @@ Current validated status:
 - `opencli chatgpt-web open` ✅
 - `opencli chatgpt-web new` ✅
 - `opencli chatgpt-web debug` ✅
+- `opencli chatgpt-web scan-dom` ✅
+- `opencli chatgpt-web scan-conversation` ✅
 - `opencli chatgpt-web ask "..."` ✅
-- `opencli chatgpt-web read` ⚠️ (still needs further hardening)
+- `opencli chatgpt-web read` ✅ (now reuses the active ChatGPT tab to read the latest visible response when possible)
+
+Recommended flow:
+
+1. `status`
+2. `new`
+3. `ask`
+4. `read`
 
 The project includes:
 
