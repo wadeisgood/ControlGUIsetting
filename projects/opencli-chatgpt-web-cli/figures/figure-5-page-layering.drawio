@@ -1,0 +1,47 @@
+<?xml version='1.0' encoding='utf-8'?>
+<mxfile host="cli-anything" agent="cli-anything-drawio/1.0.0" version="24.0.0">
+  <diagram id="diagram_1775384933963567" name="Page-1">
+    <mxGraphModel dx="1200" dy="800" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1280" pageHeight="720" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="v_1775384933963740" value="CLI / Adapter Layer&#10;(chatgpt-web ask)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#333333;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="110" y="260" width="190" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="v_1775384933963781" value="Page Abstraction Layer&#10;(goto / evaluate / insertText / screenshot)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#333333;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="430" y="260" width="230" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="v_1775384933963816" value="OpenCLI Daemon" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#333333;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="820" y="140" width="180" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="v_1775384933963857" value="Extension / CDP Bridge" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#333333;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="820" y="310" width="180" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="v_1775384933963897" value="Google Chrome&#10;Active tab + session" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#333333;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="1110" y="220" width="210" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="v_1775384933963941" value="Command forwarding loop:&#10;CLI → Page → sendCommand(...) → daemon → extension/CDP → Chrome → result back to Page" style="shape=note;whiteSpace=wrap;html=1;backgroundOutline=1;size=15;fillColor=#f5f5f5;strokeColor=#333333;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="440" y="420" width="420" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="e_1775384933965022" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#6c8ebf;strokeWidth=1;" edge="1" parent="1" source="v_1775384933963740" target="v_1775384933963781">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_1775384933965301" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#6c8ebf;strokeWidth=1;" edge="1" parent="1" source="v_1775384933963781" target="v_1775384933963816">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_1775384933965742" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#6c8ebf;strokeWidth=1;" edge="1" parent="1" source="v_1775384933963781" target="v_1775384933963857">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_1775384933966114" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#6c8ebf;strokeWidth=1;" edge="1" parent="1" source="v_1775384933963816" target="v_1775384933963897">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_1775384933966423" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#6c8ebf;strokeWidth=1;" edge="1" parent="1" source="v_1775384933963857" target="v_1775384933963897">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_1775384933966750" value="result" style="edgeStyle=orthogonalEdgeStyle;curved=1;rounded=1;strokeColor=#b85450;strokeWidth=1;dashed=1;" edge="1" parent="1" source="v_1775384933963897" target="v_1775384933963781">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

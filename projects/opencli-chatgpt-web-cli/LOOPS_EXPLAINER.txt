@@ -1,0 +1,330 @@
+============================================================
+補充章節：chatgpt-web ask 的控制迴圈與程式註解
+============================================================
+
+這一節專門解釋 `chatgpt-web ask` 的流程，目的不是只讓讀者知道它「做了哪些步驟」，而是讓讀者理解：
+
+1. 每一個步驟實際上在做什麼
+2. 哪些地方形成了「命令轉發迴圈」
+3. 哪些地方形成了「狀態輪詢迴圈」
+4. 為什麼這些迴圈對 ChatGPT 這種 SPA 網站是必要的
+
+------------------------------------------------------------
+一、先看高階流程
+------------------------------------------------------------
+
+`chatgpt-web ask` 的高階流程如下：
+
+1. `goto(ChatGPT)`
+2. `waitForReady()`
+3. `clickNewChat()`
+4. `focusComposerAndType()`
+5. `submitComposer()`
+6. `waitForAssistantResponse()`
+7. 回傳 assistant text
+
+如果只看這 7 步，會覺得這像一般自動化腳本，但實際上每一步底下都還有更細的命令流與狀態判斷。
+
+------------------------------------------------------------
+二、第一層迴圈：命令轉發迴圈
+------------------------------------------------------------
+
+OpenCLI 的 `Page` 抽象層，並不是直接控制 Chrome。它的實際模式是：
+
+Adapter / CLI
+    ↓
+Page abstraction
+    ↓
+sendCommand(...)
+    ↓
+OpenCLI daemon
+    ↓
+Browser extension / CDP
+    ↓
+Google Chrome
+    ↓
+結果回傳
+
+也就是說，每呼叫一次：
+
+- `goto()`
+- `evaluate()`
+- `screenshot()`
+- `cdp()`
+- `insertText()`
+
+最後都會變成一次「命令送出 → daemon 執行 → 結果回傳」的控制迴圈。
+
+這是理解 OpenCLI 的第一個關鍵：
+**Page API 不是瀏覽器本身，而是瀏覽器控制命令的中介層。**
+
+------------------------------------------------------------
+三、程式碼範例 1：goto(url)
+------------------------------------------------------------
+
+以下是 `Page.goto()` 的關鍵邏輯（概念化摘錄）：
+
+```js
+async goto(url, options) {
+    const result = await sendCommand('navigate', {
+        url,
+        ...this._cmdOpts(),
+    });
+
+    if (result?.tabId) {
+        this._tabId = result.tabId;
+    }
+
+    this._lastUrl = url;
+
+    if (options?.waitUntil !== 'none') {
+        const combinedCode = `${generateStealthJs()}\n${waitForDomStableJs(...)}`;
+        await sendCommand('exec', { code: combinedCode, ...this._cmdOpts() });
+    }
+}
+```
+
+### 白話註解
+
+- `sendCommand('navigate', ...)`
+  - 把「我要打開某個網址」這件事交給 daemon 去做
+
+- `result?.tabId`
+  - 若 Chrome 成功打開頁面，會回傳目前實際使用的 tabId
+  - 這個 tabId 會被記住，避免後面的命令跑到錯誤分頁
+
+- `this._lastUrl = url`
+  - 記住最後一次打開的是哪個網址
+
+- `sendCommand('exec', ...)`
+  - 導頁後，不是立刻就當成功
+  - 還會再送一段 JavaScript 到頁面裡檢查 DOM 是否穩定
+  - 這相當於「打開頁面之後，再確認頁面是不是可用」
+
+### 這裡形成的迴圈
+
+這段的迴圈不是 `for/while` 形式，而是：
+
+1. 送出 navigate 命令
+2. daemon 執行
+3. 回傳 tabId
+4. 再送一次 exec 命令
+5. 再取得穩定化結果
+
+所以它是「命令串接式控制迴圈」。
+
+------------------------------------------------------------
+四、程式碼範例 2：evaluate(js)
+------------------------------------------------------------
+
+`evaluate()` 幾乎是 OpenCLI browser automation 最核心的方法：
+
+```js
+async evaluate(js) {
+    const code = wrapForEval(js);
+    try {
+        return await sendCommand('exec', { code, ...this._cmdOpts() });
+    } catch (err) {
+        if (!isRetryableSettleError(err)) throw err;
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        return sendCommand('exec', { code, ...this._cmdOpts() });
+    }
+}
+```
+
+### 白話註解
+
+- `wrapForEval(js)`
+  - 把傳進來的 JavaScript 包成 daemon 能理解的格式
+
+- `sendCommand('exec', ...)`
+  - 真正讓頁面執行這段 JavaScript
+
+- `catch (err)` + retry
+  - 如果頁面剛好在 SPA 切換、target 暫時重建、CDP session 失效
+  - 那就等一下再試一次
+
+### 這裡形成的迴圈
+
+這裡是一個典型的「可重試控制迴圈」：
+
+1. 執行一次
+2. 若 target 暫時不穩
+3. 等 200ms
+4. 再執行一次
+
+所以這是 OpenCLI 對現代 SPA 網站的一種容錯設計。
+
+------------------------------------------------------------
+五、第二層迴圈：狀態輪詢迴圈
+------------------------------------------------------------
+
+上面講的是命令送出層。接下來看 `chatgpt-web ask` 自己的流程。
+
+例如：
+
+```js
+1. goto(ChatGPT)
+2. waitForReady()
+3. clickNewChat()
+4. focusComposerAndType()
+5. submitComposer()
+6. waitForAssistantResponse()
+7. return assistant text
+```
+
+真正形成輪詢的是：
+
+- `waitForReady()`
+- `waitForAssistantResponse()`
+
+因為它們都不是「執行一次就完成」，而是：
+
+1. 呼叫 `page.evaluate(...)` 讀當前頁面狀態
+2. 判斷條件是否成立
+3. 若不成立就等待一小段時間
+4. 再呼叫一次 `page.evaluate(...)`
+5. 直到條件成立或 timeout
+
+這就是第二層「狀態輪詢迴圈」。
+
+------------------------------------------------------------
+六、程式碼範例 3：waitForReady()
+------------------------------------------------------------
+
+概念化後的寫法如下：
+
+```js
+async function waitForReady(page, timeoutSeconds = 20) {
+  for (let i = 0; i < timeoutSeconds; i++) {
+    const snap = await pageSnapshot(page);
+    if (snap.composer || snap.loginMarkers) return snap;
+    await page.wait(1);
+  }
+  return pageSnapshot(page);
+}
+```
+
+### 白話註解
+
+- 每秒檢查一次頁面
+- 看輸入框（composer）是不是已經出現
+- 或看登入標記是否出現
+- 若頁面還沒穩定，就再等一秒
+
+### 為什麼這是必要的？
+
+因為 ChatGPT 網頁版不是靜態 HTML。剛進頁面時：
+- DOM 可能還沒載完
+- React component 可能還沒 mount 完成
+- selector 一開始可能抓不到東西
+
+所以如果不輪詢，只用一次 `querySelector()`，很容易誤判「沒有輸入框」。
+
+------------------------------------------------------------
+七、程式碼範例 4：waitForAssistantResponse()
+------------------------------------------------------------
+
+概念化後的寫法如下：
+
+```js
+async function waitForAssistantResponse(page, beforeTexts, timeoutSeconds = 60) {
+  let lastText = '';
+  for (let i = 0; i < timeoutSeconds; i++) {
+    const snap = await pageSnapshot(page);
+    const fresh = snap.assistantTexts.filter(t => !beforeTexts.includes(t));
+
+    if (fresh.length) {
+      const latest = fresh[fresh.length - 1];
+      if (latest === lastText) {
+        return latest;
+      }
+      lastText = latest;
+    }
+
+    await page.wait(1);
+  }
+
+  return lastText;
+}
+```
+
+### 白話註解
+
+- 每秒讀一次目前畫面上的 assistant texts
+- 只找「這次 ask 之後新出現的文字」
+- 如果最新那段文字已經連續穩定，就視為回應完成
+- 如果一直沒有新文字，就等到 timeout
+
+### 為什麼不能只讀最後一段文字？
+
+因為 ChatGPT 是動態生成內容的：
+- 一開始可能是空白 placeholder
+- 中途可能只有半句
+- 畫面上還可能殘留舊對話內容
+
+所以如果不做輪詢與比對，就很容易抓錯結果。
+
+------------------------------------------------------------
+八、把兩種迴圈合起來看
+------------------------------------------------------------
+
+整個 `chatgpt-web ask` 其實同時包含兩層迴圈：
+
+### 第一層：命令轉發迴圈
+CLI → Page → daemon → extension / CDP → Chrome → 回傳結果
+
+這層負責把高階需求真正送進瀏覽器。
+
+### 第二層：狀態輪詢迴圈
+adapter 反覆呼叫 `evaluate()` / `pageSnapshot()`，直到頁面狀態符合預期。
+
+這層負責等待 SPA 網站真正進入可用狀態。
+
+如果少了第一層，就無法控制瀏覽器。
+如果少了第二層，就無法穩定控制現代前端網站。
+
+------------------------------------------------------------
+九、對讀者最重要的理解點
+------------------------------------------------------------
+
+如果要用一句話總結這段程式：
+
+**OpenCLI 的 Page 抽象層，並不是在「直接操作 DOM」，而是在建立一個可重試、可輪詢、可透過 daemon 與 Chrome 溝通的控制迴圈。**
+
+因此，`chatgpt-web ask` 之所以難，不是因為少一個 selector，而是因為它同時要處理：
+
+- 正確 tab
+- 正確頁面
+- React state
+- submit 行為
+- 回應生成過程
+- 最後結果萃取
+
+而這些，都建立在 `Page` 這層控制抽象之上。
+
+------------------------------------------------------------
+十、建議放進文件的圖示對應
+------------------------------------------------------------
+
+這一節最適合搭配兩張圖：
+
+圖 A：Page 抽象層三層結構圖
+- Adapter / CLI
+- Page abstraction
+- daemon / extension / Chrome
+
+圖 B：chatgpt-web ask 迴圈圖
+- goto
+- waitForReady
+- clickNewChat
+- focusComposerAndType
+- submitComposer
+- waitForAssistantResponse
+- return assistant text
+
+這樣讀者就能同時看到：
+- 程式碼片段
+- 中文逐段解釋
+- 控制流程圖
+- 哪裡形成迴圈
