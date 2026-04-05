@@ -85,8 +85,8 @@ Validated on the target Ubuntu machine:
 - `opencli chatgpt-web debug` ✅
 - `opencli chatgpt-web ask "..."` ✅
   - verified with a non-empty assistant response
-- `opencli chatgpt-web read` ⚠️
-  - still needs further stabilization
+- `opencli chatgpt-web read` ✅
+  - now returns the latest assistant response after the latest ask (uses active ChatGPT tab)
 
 ## Commands
 
@@ -149,13 +149,14 @@ These are documented in the included technical documents and diagrams.
 
 Current main limitation:
 
-- `read` is less reliable than `ask`
+- `read` depends on reusing the active ChatGPT tab; if no active tab exists it may open a fresh page and return empty.
 
-So in practice, the best current flow is:
+Recommended flow:
 
 1. `status`
 2. `new`
 3. `ask`
+4. `read`
 
 ## Next steps
 

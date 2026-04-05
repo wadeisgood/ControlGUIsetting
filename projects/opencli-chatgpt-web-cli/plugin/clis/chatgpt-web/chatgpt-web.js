@@ -21,6 +21,18 @@ const COMPOSER_SELECTOR = [
 ].join(', ');
 
 async function ensureChatGPT(page) {
+  try {
+    const tabs = await page.tabs();
+    const idx = Array.isArray(tabs)
+      ? tabs.findIndex(t => (t?.url || '').includes('chatgpt.com'))
+      : -1;
+    if (idx >= 0) {
+      await page.selectTab(idx);
+      return;
+    }
+  } catch {
+    // ignore tab lookup errors
+  }
   await page.goto(CHATGPT_URL);
   await page.wait(2);
 }
@@ -206,6 +218,39 @@ function normalizeText(value) {
   return typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : '';
 }
 
+function chooseLatestAssistantText(snap, promptText = '') {
+  const normalizedPrompt = normalizeText(promptText);
+  const assistantCandidates = (snap.assistantTexts || []).map(normalizeText).filter(Boolean);
+  const fallbackCandidates = (snap.articleTexts || []).map(normalizeText).filter(Boolean);
+  const preferred = assistantCandidates.length ? assistantCandidates : fallbackCandidates;
+  const filtered = preferred.filter(text => text && text !== normalizedPrompt);
+  return filtered.length ? filtered[filtered.length - 1] : '';
+}
+
+async function readLatestAssistantText(page, { retries = 4, waitSeconds = 1, promptText = '' } = {}) {
+  let last = '';
+  let stableCount = 0;
+  for (let i = 0; i < retries; i++) {
+    const snap = await pageSnapshot(page);
+    const current = chooseLatestAssistantText(snap, promptText);
+    if (current) {
+      if (current === last) {
+        stableCount += 1;
+      } else {
+        last = current;
+        stableCount = 0;
+      }
+      if (stableCount >= 1 || !snap.stopButton) {
+        return current;
+      }
+    }
+    if (i < retries - 1) {
+      await page.wait(waitSeconds);
+    }
+  }
+  return last;
+}
+
 async function waitForAssistantResponse(page, beforeAssistantTexts = [], promptText = '', timeoutSeconds = 60) {
   let lastText = '';
   let stableCount = 0;
@@ -289,8 +334,9 @@ cli({
   func: async () => {
     const page = new Page('default');
     await ensureChatGPT(page);
-    const snap = await waitForReady(page);
-    return [{ text: snap.lastArticleText || '' }];
+    await waitForReady(page);
+    const text = await readLatestAssistantText(page, { retries: 5, waitSeconds: 1 });
+    return [{ text: text || '' }];
   },
 });
 
@@ -316,6 +362,324 @@ cli({
       articleCount: String(snap.articleCount),
       lastArticleText: snap.lastArticleText || '',
     }];
+  },
+});
+
+cli({
+  site: 'chatgpt-web',
+  name: 'debug-messages',
+  description: 'Inspect message-like DOM candidates and extracted assistant/user texts for debugging',
+  domain: 'chatgpt.com',
+  strategy: Strategy.COOKIE,
+  browser: true,
+  args: [],
+  columns: ['kind', 'role', 'text'],
+  func: async () => {
+    const page = new Page('default');
+    await ensureChatGPT(page);
+    await waitForReady(page);
+    const rows = await page.evaluate(`() => {
+      const cleanText = (value) => (typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : '');
+      const out = [];
+
+      const roleNodes = Array.from(document.querySelectorAll('[data-message-author-role]'));
+      roleNodes.forEach((el) => {
+        out.push({
+          kind: 'role-node',
+          role: el.getAttribute('data-message-author-role') || '',
+          text: cleanText((el.innerText || el.textContent || '').slice(0, 300))
+        });
+      });
+
+      const articleNodes = Array.from(document.querySelectorAll('article'));
+      articleNodes.forEach((el) => {
+        out.push({
+          kind: 'article',
+          role: '',
+          text: cleanText((el.innerText || el.textContent || '').slice(0, 300))
+        });
+      });
+
+      const markdownNodes = Array.from(document.querySelectorAll('[data-message-author-role="assistant"] .markdown, .markdown.prose, .prose'));
+      markdownNodes.forEach((el) => {
+        out.push({
+          kind: 'markdown',
+          role: 'assistant?',
+          text: cleanText((el.innerText || el.textContent || '').slice(0, 300))
+        });
+      });
+
+      return out.filter(item => item.text);
+    }`);
+    return Array.isArray(rows) ? rows : [];
+  },
+});
+
+cli({
+  site: 'chatgpt-web',
+  name: 'scan-dom',
+  description: 'Scan large text-bearing DOM containers to discover where ChatGPT is rendering reply content',
+  domain: 'chatgpt.com',
+  strategy: Strategy.COOKIE,
+  browser: true,
+  args: [],
+  columns: ['tag', 'role', 'classes', 'dataAttrs', 'length', 'text'],
+  func: async () => {
+    const page = new Page('default');
+    await ensureChatGPT(page);
+    await waitForReady(page);
+    const rows = await page.evaluate(`() => {
+      const cleanText = (value) => (typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : '');
+      const looksLikeNoise = (text) => text.includes('window.__oai_') || text.includes('SSR_') || text.includes('requestAnimationFrame');
+      const isInteresting = (el, text) => {
+        if (!text || text.length < 60) return false;
+        if (looksLikeNoise(text)) return false;
+        const tag = (el.tagName || '').toLowerCase();
+        return ['article','div','section','main'].includes(tag);
+      };
+      const nodes = Array.from(document.querySelectorAll('article, main, section, div'));
+      const out = [];
+      for (const el of nodes) {
+        const text = cleanText(el.innerText || el.textContent || '');
+        if (!isInteresting(el, text)) continue;
+        const dataAttrs = Array.from(el.attributes || [])
+          .map(a => a.name)
+          .filter(name => name.startsWith('data-'))
+          .slice(0, 8)
+          .join(',');
+        out.push({
+          tag: (el.tagName || '').toLowerCase(),
+          role: el.getAttribute('role') || el.getAttribute('data-message-author-role') || '',
+          classes: cleanText((el.className || '').toString()).slice(0, 120),
+          dataAttrs,
+          length: String(text.length),
+          text: text.slice(0, 300)
+        });
+      }
+      out.sort((a, b) => Number(b.length) - Number(a.length));
+      return out.slice(0, 20);
+    }`);
+    return Array.isArray(rows) ? rows : [];
+  },
+});
+
+cli({
+  site: 'chatgpt-web',
+  name: 'scan-dom-detail',
+  description: 'Deeper DOM scan with ancestor path to pinpoint ChatGPT response containers',
+  domain: 'chatgpt.com',
+  strategy: Strategy.COOKIE,
+  browser: true,
+  args: [],
+  columns: ['path', 'role', 'length', 'text'],
+  func: async () => {
+    const page = new Page('default');
+    await ensureChatGPT(page);
+    await waitForReady(page);
+    const rows = await page.evaluate(`() => {
+      const cleanText = (value) => (typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : '');
+      const looksLikeNoise = (text) => text.includes('window.__oai_') || text.includes('SSR_') || text.includes('requestAnimationFrame');
+      const buildPath = (el) => {
+        const parts = [];
+        let cur = el;
+        let depth = 0;
+        while (cur && depth < 5) {
+          const tag = (cur.tagName || '').toLowerCase();
+          if (!tag) break;
+          const cls = (cur.className || '').toString().split(/\s+/).filter(Boolean).slice(0, 2).join('.');
+          const role = cur.getAttribute('data-message-author-role') || cur.getAttribute('role') || '';
+          parts.unshift(tag + (cls ? '.' + cls : '') + (role ? '[' + role + ']' : ''));
+          cur = cur.parentElement;
+          depth += 1;
+        }
+        return parts.join(' > ');
+      };
+      const nodes = Array.from(document.querySelectorAll('article, main, section, div'));
+      const out = [];
+      for (const el of nodes) {
+        const text = cleanText(el.innerText || el.textContent || '');
+        if (!text || text.length < 80) continue;
+        if (looksLikeNoise(text)) continue;
+        out.push({
+          path: buildPath(el),
+          role: el.getAttribute('data-message-author-role') || '',
+          length: String(text.length),
+          text: text.slice(0, 300)
+        });
+      }
+      out.sort((a, b) => Number(b.length) - Number(a.length));
+      return out.slice(0, 20);
+    }`);
+    return Array.isArray(rows) ? rows : [];
+  },
+});
+
+cli({
+  site: 'chatgpt-web',
+  name: 'scan-conversation',
+  description: 'Scan only the main conversation area to locate assistant replies',
+  domain: 'chatgpt.com',
+  strategy: Strategy.COOKIE,
+  browser: true,
+  args: [],
+  columns: ['path', 'role', 'length', 'text'],
+  func: async () => {
+    const page = new Page('default');
+    await ensureChatGPT(page);
+    await waitForReady(page);
+    const rows = await page.evaluate(`() => {
+      const cleanText = (value) => (typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : '');
+      const looksLikeNoise = (text) => text.includes('window.__oai_') || text.includes('SSR_') || text.includes('requestAnimationFrame');
+      const isSidebar = (el) => {
+        if (!el) return false;
+        if (el.closest('nav') || el.closest('aside')) return true;
+        const cls = (el.className || '').toString();
+        return cls.includes('sidebar') || cls.includes('side') || cls.includes('history');
+      };
+      const root = document.body;
+      const buildPath = (el) => {
+        const parts = [];
+        let cur = el;
+        let depth = 0;
+        while (cur && depth < 6) {
+          const tag = (cur.tagName || '').toLowerCase();
+          if (!tag) break;
+          const cls = (cur.className || '').toString().split(/\s+/).filter(Boolean).slice(0, 2).join('.');
+          const role = cur.getAttribute('data-message-author-role') || cur.getAttribute('role') || '';
+          parts.unshift(tag + (cls ? '.' + cls : '') + (role ? '[' + role + ']' : ''));
+          cur = cur.parentElement;
+          depth += 1;
+        }
+        return parts.join(' > ');
+      };
+      const nodes = Array.from(root.querySelectorAll('article, section, div'));
+      const out = [];
+      for (const el of nodes) {
+        if (isSidebar(el)) continue;
+        const text = cleanText(el.innerText || el.textContent || '');
+        if (looksLikeNoise(text)) continue;
+        const role = el.getAttribute('data-message-author-role') || '';
+        if (!text && role) {
+          out.push({
+            path: buildPath(el),
+            role,
+            length: String(text.length),
+            text: ''
+          });
+          continue;
+        }
+        if (!text || text.length < 40) continue;
+        out.push({
+          path: buildPath(el),
+          role,
+          length: String(text.length),
+          text: text.slice(0, 300)
+        });
+      }
+      out.sort((a, b) => Number(b.length) - Number(a.length));
+      return out.slice(0, 20);
+    }`);
+    return Array.isArray(rows) ? rows : [];
+  },
+});
+
+cli({
+  site: 'chatgpt-web',
+  name: 'debug-layout',
+  description: 'Report main/role containers and data-testid candidates to locate conversation area',
+  domain: 'chatgpt.com',
+  strategy: Strategy.COOKIE,
+  browser: true,
+  args: [],
+  columns: ['mainFound', 'mainLen', 'roleMainCount', 'testIds'],
+  func: async () => {
+    const page = new Page('default');
+    await ensureChatGPT(page);
+    await waitForReady(page);
+    const rows = await page.evaluate(`() => {
+      const cleanText = (value) => (typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : '');
+      const main = document.querySelector('main') || document.querySelector('[role="main"]');
+      const mainText = main ? cleanText(main.innerText || main.textContent || '') : '';
+      const roleMain = Array.from(document.querySelectorAll('[role="main"]'));
+      const testIds = Array.from(document.querySelectorAll('[data-testid]'))
+        .map(el => el.getAttribute('data-testid'))
+        .filter(Boolean)
+        .reduce((acc, id) => { acc[id] = (acc[id] || 0) + 1; return acc; }, {});
+      const topIds = Object.entries(testIds)
+        .sort((a,b) => b[1]-a[1])
+        .slice(0, 12)
+        .map(([id,count]) => id + '(' + count + ')')
+        .join(', ');
+      return [{
+        mainFound: main ? 'true' : 'false',
+        mainLen: String(mainText.length || 0),
+        roleMainCount: String(roleMain.length || 0),
+        testIds: topIds
+      }];
+    }`);
+    return Array.isArray(rows) ? rows : [];
+  },
+});
+
+cli({
+  site: 'chatgpt-web',
+  name: 'debug-frames',
+  description: 'List iframe sources and titles to detect nested conversation surfaces',
+  domain: 'chatgpt.com',
+  strategy: Strategy.COOKIE,
+  browser: true,
+  args: [],
+  columns: ['src', 'title'],
+  func: async () => {
+    const page = new Page('default');
+    await ensureChatGPT(page);
+    await waitForReady(page);
+    const rows = await page.evaluate(`() => {
+      const iframes = Array.from(document.querySelectorAll('iframe'));
+      return iframes.map(el => ({
+        src: el.getAttribute('src') || '',
+        title: el.getAttribute('title') || ''
+      }));
+    }`);
+    return Array.isArray(rows) ? rows : [];
+  },
+});
+
+cli({
+  site: 'chatgpt-web',
+  name: 'scan-shadow',
+  description: 'Scan shadow DOM trees for large text blocks (possible chat responses)',
+  domain: 'chatgpt.com',
+  strategy: Strategy.COOKIE,
+  browser: true,
+  args: [],
+  columns: ['host', 'length', 'text'],
+  func: async () => {
+    const page = new Page('default');
+    await ensureChatGPT(page);
+    await waitForReady(page);
+    const rows = await page.evaluate(`() => {
+      const cleanText = (value) => (typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : '');
+      const out = [];
+      const visit = (root, hostTag) => {
+        if (!root) return;
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT, null);
+        let node = walker.currentNode;
+        while (node) {
+          const text = cleanText(node.innerText || node.textContent || '');
+          if (text && text.length > 80) {
+            out.push({ host: hostTag, length: String(text.length), text: text.slice(0, 300) });
+          }
+          if (node.shadowRoot) {
+            visit(node.shadowRoot, (node.tagName || '').toLowerCase());
+          }
+          node = walker.nextNode();
+        }
+      };
+      visit(document, 'document');
+      return out.slice(0, 20);
+    }`);
+    return Array.isArray(rows) ? rows : [];
   },
 });
 
