@@ -83,10 +83,31 @@ Validated on the target Ubuntu machine:
 - `opencli chatgpt-web open` ✅
 - `opencli chatgpt-web new` ✅
 - `opencli chatgpt-web debug` ✅
+- `opencli chatgpt-web scan-dom` ✅
+- `opencli chatgpt-web scan-conversation` ✅
 - `opencli chatgpt-web ask "..."` ✅
   - verified with a non-empty assistant response
 - `opencli chatgpt-web read` ✅
-  - now returns the latest assistant response after the latest ask (uses active ChatGPT tab)
+  - returns the latest assistant response after the latest ask by reusing the active ChatGPT tab when possible
+
+## What each command is for
+
+- `status`
+  - quick health check for page availability, login markers, and composer visibility
+- `open`
+  - opens or focuses ChatGPT Web and reports the current page state
+- `new`
+  - tries to start a fresh conversation
+- `ask`
+  - types a prompt into the composer, submits it, and waits for the latest response
+- `read`
+  - reads the latest visible assistant response from the current ChatGPT session
+- `debug`
+  - compact selector/page-state snapshot for fast troubleshooting
+- `scan-dom`
+  - returns higher-level DOM-derived state such as composer, send button, stop button, and message counters
+- `scan-conversation`
+  - returns the latest visible user/assistant snippets and a short conversation preview
 
 ## Commands
 
@@ -147,20 +168,27 @@ These are documented in the included technical documents and diagrams.
 - `docs/OPENCLI_TECHNICAL_ANALYSIS_TEACHING_REVIEW_V2.pdf`
   - final PDF export
 
-## Known limitation
+## Recommended usage flow
 
-Current main limitation:
+For the most reliable behavior:
 
-- `read` depends on reusing the active ChatGPT tab; if no active tab exists it may open a fresh page and return empty.
+1. `opencli chatgpt-web status`
+2. `opencli chatgpt-web new`
+3. `opencli chatgpt-web ask "..."`
+4. `opencli chatgpt-web read`
 
-Recommended flow:
+Example:
 
-1. `status`
-2. `new`
-3. `ask`
-4. `read`
+```bash
+opencli chatgpt-web status
+opencli chatgpt-web new
+opencli chatgpt-web ask "請回覆：read 測試成功。"
+opencli chatgpt-web read
+```
 
-Useful debugging commands:
+## Debugging workflow
+
+When the ChatGPT UI changes or selectors become unstable, use:
 
 - `debug`
   - compact selector/page-state dump
@@ -168,6 +196,20 @@ Useful debugging commands:
   - inspect visible DOM-derived state such as composer, send button, stop button, and message counts
 - `scan-conversation`
   - inspect the latest visible user/assistant snippets plus a short conversation preview
+
+Suggested troubleshooting order:
+
+1. `opencli chatgpt-web debug`
+2. `opencli chatgpt-web scan-dom`
+3. `opencli chatgpt-web scan-conversation`
+
+## Known limitations
+
+Current main limitations:
+
+- `read` still depends on reusing the active ChatGPT tab; if no reusable tab exists it may fall back to a fresh page and return empty
+- DOM selectors may still drift if ChatGPT changes its layout or experiment bucket
+- conversation preview output is intended for debugging, not long-form export
 
 ## Next steps
 
